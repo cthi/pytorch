@@ -243,6 +243,67 @@ if(USE_MEM_EFF_ATTENTION)
   list(APPEND ATen_ATTENTION_KERNEL_SRCS ${mem_eff_attention_cuda_kernels_cu})
 endif()
 
+# FBGEMM GenAI
+# For build issues please contact fbgemm_dev
+IF(USE_FBGEMM_GENAI)
+  IF (USE_CUDA AND NOT ("9.0a" IN_LIST TORCH_CUDA_ARCH_LIST OR "10.0a" IN_LIST TORCH_CUDA_ARCH_LIST OR "12.0a" IN_LIST TORCH_CUDA_ARCH_LIST))
+    set(USE_FBGEMM_GENAI off)
+  endif()
+  add_library(fbgemm_genai OBJECT)
+  set_target_properties(fbgemm_genai PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+  # Use the FBGEMM version of CUTLASS/CK as it may be different than the one in torch
+  set(FBGEMM_THIRD_PARTY ${PROJECT_SOURCE_DIR}/third_party/fbgemm/external/)
+  # Currently we only add in GEMM kernels, hence the quantize directory
+  set(FBGEMM_GENAI_SRCS ${PROJECT_SOURCE_DIR}/third_party/fbgemm/fbgemm_gpu/experimental/gen_ai/src/quantize)
+
+
+  if(USE_CUDA)
+    # To avoid increasing the build time/binary size unneccesarily, use an allow-list of kernels to build.
+    # If you want to integrate a kernel from FBGEMM into torch, you have to add it here.
+    set(FBGEMM_CUTLASS_KERNELS_REGEX
+      ".*(f8f8bf16_rowwise).*"
+    )
+
+    file(GLOB_RECURSE fbgemm_genai_native_cuda_cu
+      "${FBGEMM_GENAI_SRCS}/cutlass_extensions/*.cu"
+      "${FBGEMM_GENAI_SRCS}/cutlass_extensions/**/*.cu")
+    list(FILTER fbgemm_genai_native_cuda_cu INCLUDE REGEX ${FBGEMM_CUTLASS_KERNELS_REGEX})
+
+    set(fbgemm_genai_native_cuda_cuh
+      "${FBGEMM_GENAI_SRCS}/cutlass_extensions/f8f8bf16_rowwise/"
+    )
+
+    file(GLOB_RECURSE fbgemm_genai_native_cuda_cpp
+      "${FBGEMM_GENAI_SRCS}/common/*.cpp"
+      # For the torch integration, we cannot reuse the op definitions, as we only expose certain ops.
+      "${FBGEMM_GENAI_SRCS}/quantize_defs_torch.cpp"
+      "${FBGEMM_GENAI_SRCS}/quantize_torch.cpp"
+    )
+
+    set(fbgemm_genai_native_cuda_h
+      "${FBGEMM_GENAI_SRCS}/common/include/"
+    )
+
+    target_include_directories(fbgemm_genai PUBLIC
+      ${FBGEMM_THIRD_PARTY}/cutlass/include
+      ${FBGEMM_THIRD_PARTY}/cutlass/tools/util/include
+      ${fbgemm_genai_native_cuda_cuh}
+      ${fbgemm_genai_native_cuda_h}
+    )
+    target_sources(fbgemm_genai PRIVATE
+      ${fbgemm_genai_native_cuda_cu}
+      ${fbgemm_genai_native_cuda_cpp}
+    )
+  else()
+    target_include_directories(fbgemm_genai PUBLIC
+      ${FBGEMM_THIRD_PARTY}/composable_kernel/include
+      ${FBGEMM_THIRD_PARTY}/composable_kernel/library/include
+    )
+  endif()
+
+endif()
+
 # XNNPACK
 file(GLOB native_xnnpack "native/xnnpack/*.cpp")
 
